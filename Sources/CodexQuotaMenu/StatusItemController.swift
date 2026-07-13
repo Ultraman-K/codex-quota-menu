@@ -6,14 +6,23 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let onRefresh: () -> Void
     private let onToggleLaunchAtLogin: () -> Void
+    private let onToggleCompactMode: () -> Void
     private var currentDisplay = QuotaPresentation.make(snapshot: nil)
     private var launchAtLoginEnabled = false
+    private var displayMode: StatusBarDisplayMode
     private var isRefreshing = false
     private var errorMessage: String?
 
-    init(onRefresh: @escaping () -> Void, onToggleLaunchAtLogin: @escaping () -> Void) {
+    init(
+        onRefresh: @escaping () -> Void,
+        onToggleLaunchAtLogin: @escaping () -> Void,
+        onToggleCompactMode: @escaping () -> Void,
+        displayMode: StatusBarDisplayMode
+    ) {
         self.onRefresh = onRefresh
         self.onToggleLaunchAtLogin = onToggleLaunchAtLogin
+        self.onToggleCompactMode = onToggleCompactMode
+        self.displayMode = displayMode
         super.init()
         item.menu = makeMenu()
         render(display: currentDisplay)
@@ -27,6 +36,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     func setLaunchAtLoginEnabled(_ enabled: Bool) {
         launchAtLoginEnabled = enabled
+        item.menu = makeMenu()
+    }
+
+    func setDisplayMode(_ mode: StatusBarDisplayMode) {
+        displayMode = mode
+        render(display: currentDisplay)
         item.menu = makeMenu()
     }
 
@@ -49,7 +64,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private func statusTitle(display: QuotaDisplay) -> NSAttributedString {
         let title = NSMutableAttributedString()
-        let parts = display.menuText.components(separatedBy: " | ")
+        let parts = QuotaPresentation.statusText(display, mode: displayMode).components(separatedBy: " | ")
         title.append(metricText(parts[safe: 0] ?? "5h --", card: display.cards.first(where: { $0.title == "5 小时使用限制" })))
         title.append(NSAttributedString(string: " | ", attributes: [.foregroundColor: NSColor.secondaryLabelColor]))
         title.append(metricText(parts[safe: 1] ?? "7d --", card: display.cards.first(where: { $0.title == "每周使用限额" })))
@@ -94,6 +109,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let source = NSMenuItem(title: "来源：\(currentDisplay.sourceText)", action: nil, keyEquivalent: "")
         source.isEnabled = false
         menu.addItem(source)
+        let compactMode = NSMenuItem(title: "简洁模式", action: #selector(toggleCompactMode), keyEquivalent: "")
+        compactMode.target = self
+        compactMode.state = displayMode == .compact ? .on : .off
+        menu.addItem(compactMode)
         let launchAtLogin = NSMenuItem(title: "登录时自动启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         launchAtLogin.target = self
         launchAtLogin.state = launchAtLoginEnabled ? .on : .off
@@ -121,6 +140,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func toggleLaunchAtLogin() {
         onToggleLaunchAtLogin()
+    }
+
+    @objc private func toggleCompactMode() {
+        onToggleCompactMode()
     }
 }
 

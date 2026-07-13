@@ -1,5 +1,22 @@
 import Foundation
 
+public enum StatusBarDisplayMode: Equatable, Sendable {
+    case full
+    case compact
+}
+
+public enum StatusBarDisplayModePreference {
+    private static let compactModeKey = "CodexQuotaMenu.compactStatusBar"
+
+    public static func load(from defaults: UserDefaults = .standard) -> StatusBarDisplayMode {
+        defaults.bool(forKey: compactModeKey) ? .compact : .full
+    }
+
+    public static func save(_ mode: StatusBarDisplayMode, to defaults: UserDefaults = .standard) {
+        defaults.set(mode == .compact, forKey: compactModeKey)
+    }
+}
+
 public struct QuotaCardDisplay: Equatable, Sendable {
     public let title: String
     public let resetText: String
@@ -16,6 +33,10 @@ public struct QuotaDisplay: Equatable, Sendable {
 }
 
 public enum QuotaPresentation {
+    public static func statusText(_ display: QuotaDisplay, mode: StatusBarDisplayMode) -> String {
+        mode == .compact ? "5h | 7d" : display.menuText
+    }
+
     public static func make(
         snapshot: QuotaSnapshot?,
         now: Date = .now,

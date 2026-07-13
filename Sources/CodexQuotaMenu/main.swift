@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var updatesTask: Task<Void, Never>?
     private var launchAtLoginManager: LaunchAtLoginManager?
     private var launchAtLoginEnabled = false
+    private var statusBarDisplayMode = StatusBarDisplayModePreference.load()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let locator = CodexExecutableLocator()
@@ -35,7 +36,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         statusItem = StatusItemController(
             onRefresh: { [weak self] in self?.refresh() },
-            onToggleLaunchAtLogin: { [weak self] in self?.toggleLaunchAtLogin() }
+            onToggleLaunchAtLogin: { [weak self] in self?.toggleLaunchAtLogin() },
+            onToggleCompactMode: { [weak self] in self?.toggleCompactMode() },
+            displayMode: statusBarDisplayMode
         )
         Task { [weak self] in
             let enabled = await self?.launchAtLoginManager?.isEnabled() ?? false
@@ -114,6 +117,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.statusItem?.setError("登录时自动启动设置失败")
             }
         }
+    }
+
+    private func toggleCompactMode() {
+        statusBarDisplayMode = statusBarDisplayMode == .compact ? .full : .compact
+        StatusBarDisplayModePreference.save(statusBarDisplayMode)
+        statusItem?.setDisplayMode(statusBarDisplayMode)
     }
 
     private func userMessage(for error: Error) -> String {
