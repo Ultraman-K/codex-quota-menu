@@ -4,6 +4,22 @@ public enum QuotaKind: String, Codable, Sendable { case fiveHour, weekly }
 public enum QuotaSource: String, Codable, Sendable { case appServer, sessionLog, cache }
 public enum QuotaFreshness: String, Codable, Sendable { case fresh, stale, unavailable }
 public enum QuotaAlert: String, Codable, Sendable { case normal, warning, danger, unknown }
+public enum QuotaDisplayState: Equatable, Sendable { case live, refreshing, lastKnown, expired, unavailable }
+public enum QuotaFailureReason: Equatable, Sendable { case timeout, codexNotFound, notAuthenticated, processExited, protocolError, cacheUnreadable, unknown }
+
+public struct QuotaRefreshResult: Equatable, Sendable {
+    public let snapshot: QuotaSnapshot?
+    public let state: QuotaDisplayState
+    public let failureReason: QuotaFailureReason?
+    public let nextRetryAt: Date?
+
+    public init(snapshot: QuotaSnapshot?, state: QuotaDisplayState, failureReason: QuotaFailureReason? = nil, nextRetryAt: Date? = nil) {
+        self.snapshot = snapshot
+        self.state = state
+        self.failureReason = failureReason
+        self.nextRetryAt = nextRetryAt
+    }
+}
 
 public struct RawQuotaWindow: Equatable, Sendable {
     public let windowMinutes: Int

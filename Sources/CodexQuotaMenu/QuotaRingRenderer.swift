@@ -13,7 +13,7 @@ enum QuotaVisualColor {
 }
 
 enum QuotaRingRenderer {
-    static func image(remainingPercent: Int?, alert: QuotaAlert?) -> NSImage {
+    static func image(remainingPercent: Int?, alert: QuotaAlert?, muted: Bool = false) -> NSImage {
         let size = NSSize(width: 14, height: 14)
         let image = NSImage(size: size, flipped: false) { rect in
             let center = CGPoint(x: rect.midX, y: rect.midY)
@@ -21,7 +21,8 @@ enum QuotaRingRenderer {
             let track = NSBezierPath()
             track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360, clockwise: false)
             track.lineWidth = 2.5
-            QuotaVisualColor.foreground(for: alert).withAlphaComponent(0.28).setStroke()
+            let color = muted ? NSColor.secondaryLabelColor : QuotaVisualColor.foreground(for: alert)
+            color.withAlphaComponent(0.28).setStroke()
             track.stroke()
 
             guard let remainingPercent else { return true }
@@ -37,7 +38,7 @@ enum QuotaRingRenderer {
             )
             arc.lineCapStyle = .round
             arc.lineWidth = 2.5
-            QuotaVisualColor.foreground(for: alert).setStroke()
+            color.setStroke()
             arc.stroke()
             return true
         }

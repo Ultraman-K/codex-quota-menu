@@ -5,6 +5,7 @@ public actor AppServerRateLimitProvider: RateLimitProvider {
 
     private let transport: any LineTransport
     private let now: @Sendable () -> Date
+    private let requestTimeout: Duration
     private var started = false
     private var nextRequestID = 1
     private var readerTask: Task<Void, Never>?
@@ -13,13 +14,16 @@ public actor AppServerRateLimitProvider: RateLimitProvider {
     private var terminalError: Error?
     private var latestWireSnapshot: AppServerWireSnapshot?
     private var updateContinuation: AsyncThrowingStream<RawQuotaSnapshot, Error>.Continuation?
+    private var requestDidTimeout = false
 
     public init(
         transport: any LineTransport,
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = Date.init,
+        requestTimeout: Duration = .seconds(10)
     ) {
         self.transport = transport
         self.now = now
+        self.requestTimeout = requestTimeout
     }
 
     public init(locator: CodexExecutableLocator = .init()) throws {
@@ -29,15 +33,37 @@ public actor AppServerRateLimitProvider: RateLimitProvider {
         let command = CodexAppServerCommand(codexURL: executableURL)
         transport = LineProcessTransport(executableURL: command.executableURL, arguments: command.arguments)
         now = Date.init
+        requestTimeout = .seconds(10)
     }
 
     public func fetch() async throws -> RawQuotaSnapshot {
+        requestDidTimeout = false
+        let timeoutTask = Task.detached { [weak self, requestTimeout] in
+            try? await Task.sleep(for: requestTimeout)
+            guard !Task.isCancelled else { return }
+            await self?.timeoutCurrentRequest()
+        }
+        defer { timeoutTask.cancel() }
+        do {
+            return try await fetchUnbounded()
+        } catch {
+            if requestDidTimeout { throw RateLimitProviderError.timedOut }
+            throw error
+        }
+    }
+
+    private func fetchUnbounded() async throws -> RawQuotaSnapshot {
         try await startIfNeeded()
         let message = try await request(method: "account/rateLimits/read", params: nil)
         try throwForMessageError(message)
         guard let snapshot = message.snapshot else { throw RateLimitProviderError.noQuotaData }
         latestWireSnapshot = snapshot
         return snapshot.toRaw(capturedAt: now())
+    }
+
+    private func timeoutCurrentRequest() async {
+        requestDidTimeout = true
+        await stop()
     }
 
     public func updates() async -> AsyncThrowingStream<RawQuotaSnapshot, Error> {

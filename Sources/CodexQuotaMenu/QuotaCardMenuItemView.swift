@@ -5,10 +5,10 @@ import CodexQuotaCore
 final class QuotaCardMenuItemView: NSView {
     private let rows: [QuotaCardRowView]
 
-    init(cards: [QuotaCardDisplay]) {
-        rows = cards.map(QuotaCardRowView.init)
+    init(cards: [QuotaCardDisplay], leadingInset: CGFloat) {
+        rows = cards.map { QuotaCardRowView(card: $0, leadingInset: leadingInset) }
         let height = CGFloat(max(rows.count, 1)) * 92
-        super.init(frame: NSRect(x: 0, y: 0, width: 168, height: height))
+        super.init(frame: NSRect(x: 0, y: 0, width: 208, height: height))
         for row in rows {
             addSubview(row)
         }
@@ -28,14 +28,16 @@ final class QuotaCardMenuItemView: NSView {
 @MainActor
 private final class QuotaCardRowView: NSView {
     private let card: QuotaCardDisplay
+    private let leadingInset: CGFloat
     private let titleLabel = NSTextField(labelWithString: "")
     private let resetLabel = NSTextField(labelWithString: "")
     private let valueLabel = NSTextField(labelWithString: "")
     private let trackView = NSView()
     private let fillView = NSView()
 
-    init(card: QuotaCardDisplay) {
+    init(card: QuotaCardDisplay, leadingInset: CGFloat) {
         self.card = card
+        self.leadingInset = leadingInset
         super.init(frame: .zero)
         wantsLayer = true
 
@@ -67,7 +69,7 @@ private final class QuotaCardRowView: NSView {
 
     override func layout() {
         super.layout()
-        let inset: CGFloat = 12
+        let inset = leadingInset
         let valueWidth = ceil(valueLabel.intrinsicContentSize.width) + 6
         let gap: CGFloat = 8
         titleLabel.frame = NSRect(x: inset, y: bounds.height - 31, width: bounds.width - inset * 2, height: 20)

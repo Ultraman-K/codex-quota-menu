@@ -13,4 +13,5 @@ public enum RateLimitProviderError: Error, Equatable {
     case protocolViolation(String)
     case noQuotaData
     case processExited(Int32)
+    case timedOut
 }

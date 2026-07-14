@@ -2,7 +2,6 @@ import Foundation
 
 public actor RateLimitCoordinator {
     private let primary: any RateLimitProvider
-    private let fallback: (any RateLimitProvider)?
     private let cache: any QuotaCache
     private let now: @Sendable () -> Date
     private var latest: QuotaSnapshot?
@@ -14,35 +13,32 @@ public actor RateLimitCoordinator {
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.primary = primary
-        self.fallback = fallback
         self.cache = cache
         self.now = now
     }
 
-    public func refresh() async throws -> QuotaSnapshot {
+    public func refresh() async -> QuotaRefreshResult {
         if let snapshot = try? await normalizedSnapshot(from: primary) {
-            return snapshot
-        }
-        if let fallback, let snapshot = try? await normalizedSnapshot(from: fallback) {
-            return snapshot
+            return .init(snapshot: snapshot, state: .live)
         }
         if let latest {
-            return latest
+            return .init(snapshot: latest, state: isPastReset(latest) ? .expired : .lastKnown, failureReason: .unknown)
         }
-        if let cached = try cache.load() {
+        if let cached = try? cache.load() {
             let result = copy(
                 cached,
                 source: .cache,
-                freshness: isPastReset(cached) ? .stale : cached.freshness
+                freshness: .stale
             )
             latest = result
-            return result
+            return .init(snapshot: result, state: .expired, failureReason: .unknown)
         }
-        throw RateLimitProviderError.noQuotaData
+        return .init(snapshot: nil, state: .unavailable, failureReason: .unknown)
     }
 
-    public func current() -> QuotaSnapshot? {
-        latest
+    public func current() -> QuotaRefreshResult {
+        guard let latest else { return .init(snapshot: nil, state: .unavailable) }
+        return .init(snapshot: latest, state: isPastReset(latest) ? .expired : .lastKnown)
     }
 
     public func updates() async -> AsyncThrowingStream<QuotaSnapshot, Error> {
@@ -67,7 +63,6 @@ public actor RateLimitCoordinator {
 
     public func stop() async {
         await primary.stop()
-        await fallback?.stop()
     }
 
     private func normalizedSnapshot(from provider: any RateLimitProvider) async throws -> QuotaSnapshot {

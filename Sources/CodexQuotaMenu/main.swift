@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: RateLimitCoordinator?
     private var statusItem: StatusItemController?
     private var refreshTimer: Timer?
+    private var consecutiveFailures = 0
     private var refreshTask: Task<Void, Never>?
     private var updatesTask: Task<Void, Never>?
     private var launchAtLoginManager: LaunchAtLoginManager?
@@ -20,7 +21,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let locator = CodexExecutableLocator()
-        let fallback = SessionLogRateLimitProvider()
         let primary: any RateLimitProvider
         do {
             primary = try AppServerRateLimitProvider()
@@ -29,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let cacheURL = URL(fileURLWithPath: NSHomeDirectory())
             .appending(path: "Library/Application Support/CodexQuotaMenu/quota-cache.json")
-        coordinator = RateLimitCoordinator(primary: primary, fallback: fallback, cache: FileQuotaCache(fileURL: cacheURL))
+        coordinator = RateLimitCoordinator(primary: primary, cache: FileQuotaCache(fileURL: cacheURL))
         launchAtLoginManager = LaunchAtLoginManager(
             executableURL: URL(fileURLWithPath: CommandLine.arguments[0]),
             codexURL: locator.resolve()
@@ -48,9 +48,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         refresh()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
-        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -66,24 +63,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.setRefreshing(true)
         let startedAt = ContinuousClock.now
         refreshTask = Task { [weak self] in
-            do {
-                let snapshot = try await coordinator.refresh()
-                self?.statusItem?.render(snapshot: snapshot)
-                self?.statusItem?.setError(nil)
-                if snapshot.source == .appServer {
+            defer {
+                self?.refreshTask = nil
+                self?.statusItem?.setRefreshing(false)
+            }
+            let result = await coordinator.refresh()
+            self?.statusItem?.render(result: result)
+            if result.state == .live, result.snapshot?.source == .appServer {
                     self?.startListeningForUpdates()
-                }
-            } catch {
-                self?.statusItem?.render(snapshot: await coordinator.current())
-                self?.statusItem?.setError(self?.userMessage(for: error))
             }
             let minimumDisabledDuration = Duration.seconds(1)
             let elapsed = startedAt.duration(to: .now)
             if elapsed < minimumDisabledDuration {
                 try? await Task.sleep(for: minimumDisabledDuration - elapsed)
             }
-            self?.refreshTask = nil
-            self?.statusItem?.setRefreshing(false)
+            self?.scheduleNextRefresh(for: result)
+        }
+    }
+
+    private func scheduleNextRefresh(for result: QuotaRefreshResult) {
+        refreshTimer?.invalidate()
+        if result.state == .live { consecutiveFailures = 0 } else { consecutiveFailures += 1 }
+        let delay = RefreshSchedule.nextDelay(consecutiveFailures: consecutiveFailures, reason: result.failureReason)
+        let seconds = Double(delay.components.seconds) + Double(delay.components.attoseconds) / 1e18
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
         }
     }
 

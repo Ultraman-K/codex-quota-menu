@@ -29,7 +29,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     func render(snapshot: QuotaSnapshot?) {
-        currentDisplay = QuotaPresentation.make(snapshot: snapshot)
+        render(result: .init(snapshot: snapshot, state: snapshot == nil ? .unavailable : .live))
+    }
+
+    func render(result: QuotaRefreshResult) {
+        currentDisplay = QuotaPresentation.make(result: result)
         render(display: currentDisplay)
         item.menu = makeMenu()
     }
@@ -65,19 +69,19 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func statusTitle(display: QuotaDisplay) -> NSAttributedString {
         let title = NSMutableAttributedString()
         let parts = QuotaPresentation.statusText(display, mode: displayMode).components(separatedBy: " | ")
-        title.append(metricText(parts[safe: 0] ?? "5h --", card: display.cards.first(where: { $0.title == "5 小时使用限制" })))
+        title.append(metricText(parts[safe: 0] ?? "5h --", card: display.cards.first(where: { $0.title == "5 小时使用限制" }), muted: display.usesMutedQuotaColors))
         title.append(NSAttributedString(string: " | ", attributes: [.foregroundColor: NSColor.secondaryLabelColor]))
-        title.append(metricText(parts[safe: 1] ?? "7d --", card: display.cards.first(where: { $0.title == "每周使用限额" })))
+        title.append(metricText(parts[safe: 1] ?? "7d --", card: display.cards.first(where: { $0.title == "每周使用限额" }), muted: display.usesMutedQuotaColors))
         return title
     }
 
-    private func metricText(_ text: String, card: QuotaCardDisplay?) -> NSAttributedString {
+    private func metricText(_ text: String, card: QuotaCardDisplay?, muted: Bool) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let attachment = NSTextAttachment()
-        attachment.image = QuotaRingRenderer.image(remainingPercent: card?.remainingPercent, alert: card?.alert)
+        attachment.image = QuotaRingRenderer.image(remainingPercent: card?.remainingPercent, alert: card?.alert, muted: muted)
         attachment.bounds = NSRect(x: 0, y: -2, width: 14, height: 14)
         result.append(NSAttributedString(attachment: attachment))
-        result.append(NSAttributedString(string: " \(text)", attributes: [.foregroundColor: QuotaVisualColor.foreground(for: card?.alert)]))
+        result.append(NSAttributedString(string: " \(text)", attributes: [.foregroundColor: muted ? NSColor.secondaryLabelColor : QuotaVisualColor.foreground(for: card?.alert)]))
         return result
     }
 
@@ -92,7 +96,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             }
         } else {
             let cards = NSMenuItem()
-            cards.view = QuotaCardMenuItemView(cards: currentDisplay.cards)
+            let hasCheckmark = displayMode == .compact || launchAtLoginEnabled
+            cards.view = QuotaCardMenuItemView(cards: currentDisplay.cards, leadingInset: hasCheckmark ? 24 : 12)
             menu.addItem(cards)
         }
         if let errorMessage {
@@ -101,14 +106,21 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             error.attributedTitle = NSAttributedString(string: errorMessage, attributes: [.foregroundColor: NSColor.systemRed])
             menu.addItem(error)
         }
+        if let detailStatusText = currentDisplay.detailStatusText {
+            let status = NSMenuItem(title: detailStatusText, action: nil, keyEquivalent: "")
+            status.isEnabled = false
+            menu.addItem(status)
+        }
+        if let retryText = currentDisplay.retryText {
+            let retry = NSMenuItem(title: retryText, action: nil, keyEquivalent: "")
+            retry.isEnabled = false
+            menu.addItem(retry)
+        }
         menu.addItem(.separator())
-        let refresh = NSMenuItem(title: "立即刷新", action: #selector(refresh), keyEquivalent: "")
+        let refresh = NSMenuItem(title: isRefreshing ? "正在刷新…" : "立即刷新", action: #selector(refresh), keyEquivalent: "")
         refresh.target = self
         refresh.isEnabled = !isRefreshing
         menu.addItem(refresh)
-        let source = NSMenuItem(title: "来源：\(currentDisplay.sourceText)", action: nil, keyEquivalent: "")
-        source.isEnabled = false
-        menu.addItem(source)
         let compactMode = NSMenuItem(title: "简洁模式", action: #selector(toggleCompactMode), keyEquivalent: "")
         compactMode.target = self
         compactMode.state = displayMode == .compact ? .on : .off
@@ -129,9 +141,15 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         refreshItem.isEnabled = !isRefreshing
     }
 
-    @objc private func refresh() {
+    @objc private func refresh(_ sender: NSMenuItem) {
         guard !isRefreshing else { return }
+        let trackingMenu = sender.menu
+        sender.title = "正在刷新…"
+        sender.isEnabled = false
         onRefresh()
+        DispatchQueue.main.async {
+            trackingMenu?.cancelTrackingWithoutAnimation()
+        }
     }
 
     @objc private func quit() {
