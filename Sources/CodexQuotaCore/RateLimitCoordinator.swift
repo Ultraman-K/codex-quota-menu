@@ -18,22 +18,37 @@ public actor RateLimitCoordinator {
     }
 
     public func refresh() async -> QuotaRefreshResult {
-        if let snapshot = try? await normalizedSnapshot(from: primary) {
+        do {
+            let snapshot = try await normalizedSnapshot(from: primary)
             return .init(snapshot: snapshot, state: .live)
+        } catch {
+            let reason = failureReason(for: error)
+            if let latest {
+                let state: QuotaDisplayState = latest.source == .cache || isPastReset(latest) ? .expired : .lastKnown
+                return .init(snapshot: latest, state: state, failureReason: reason)
+            }
+            do {
+                guard let cached = try cache.load() else {
+                    return .init(snapshot: nil, state: .unavailable, failureReason: reason)
+                }
+                let result = copy(cached, source: .cache, freshness: .stale)
+                latest = result
+                return .init(snapshot: result, state: .expired, failureReason: reason)
+            } catch {
+                return .init(snapshot: nil, state: .unavailable, failureReason: reason)
+            }
         }
-        if let latest {
-            return .init(snapshot: latest, state: isPastReset(latest) ? .expired : .lastKnown, failureReason: .unknown)
-        }
-        if let cached = try? cache.load() {
-            let result = copy(
-                cached,
-                source: .cache,
-                freshness: .stale
-            )
+    }
+
+    public func loadCachedSnapshot() -> QuotaRefreshResult {
+        do {
+            guard let cached = try cache.load() else { return .init(snapshot: nil, state: .unavailable) }
+            let result = copy(cached, source: .cache, freshness: .stale)
             latest = result
-            return .init(snapshot: result, state: .expired, failureReason: .unknown)
+            return .init(snapshot: result, state: isPastReset(result) ? .expired : .lastKnown)
+        } catch {
+            return .init(snapshot: nil, state: .unavailable, failureReason: .cacheUnreadable)
         }
-        return .init(snapshot: nil, state: .unavailable, failureReason: .unknown)
     }
 
     public func current() -> QuotaRefreshResult {
@@ -95,6 +110,18 @@ public actor RateLimitCoordinator {
         [snapshot.fiveHour?.resetsAt, snapshot.weekly?.resetsAt]
             .compactMap { $0 }
             .contains(where: { $0 <= now() })
+    }
+
+    private func failureReason(for error: Error) -> QuotaFailureReason {
+        guard let error = error as? RateLimitProviderError else { return .unknown }
+        return switch error {
+        case .timedOut: .timeout
+        case .codexNotFound: .codexNotFound
+        case .notAuthenticated: .notAuthenticated
+        case .processExited: .processExited
+        case .networkUnavailable: .networkUnavailable
+        case .protocolViolation, .noQuotaData: .protocolError
+        }
     }
 
 }

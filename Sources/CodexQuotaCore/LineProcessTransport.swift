@@ -10,6 +10,8 @@ public protocol LineTransport: Sendable {
 public actor LineProcessTransport: LineTransport {
     private let executableURL: URL
     private let arguments: [String]
+    private let environment: [String: String]
+    private let logger: DiagnosticsLogger?
     private var process: Process?
     private var stdin: FileHandle?
     private var stdout: FileHandle?
@@ -19,31 +21,55 @@ public actor LineProcessTransport: LineTransport {
     private var terminationStatus: Int32?
     private var outputReachedEOF = false
     private var didFinish = false
+    private var outputTask: Task<Void, Never>?
+    private var generation = 0
 
-    public init(executableURL: URL, arguments: [String]) {
+    public init(
+        executableURL: URL,
+        arguments: [String],
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        logger: DiagnosticsLogger? = nil
+    ) {
         self.executableURL = executableURL
         self.arguments = arguments
+        self.environment = environment
+        self.logger = logger
     }
 
     public func start() async throws {
         guard process == nil else { return }
+        generation += 1
+        let processGeneration = generation
+        buffer.removeAll(keepingCapacity: false)
+        terminationStatus = nil
+        outputReachedEOF = false
+        didFinish = false
 
         let child = Process()
         let input = Pipe()
         let output = Pipe()
         let errorPipe = Pipe()
         let pair = AsyncThrowingStream<Data, Error>.makeStream()
+        let logger = logger
 
         child.executableURL = executableURL
         child.arguments = arguments
+        child.environment = environment
         child.standardInput = input
         child.standardOutput = output
         child.standardError = errorPipe
         child.terminationHandler = { [weak self] process in
-            Task { await self?.recordTermination(process.terminationStatus) }
+            if let logger {
+                Task { await logger.log(level: process.terminationStatus == 0 ? .info : .error, component: "codex", message: "process exited with status \(process.terminationStatus)") }
+            }
+            Task { await self?.recordTermination(process.terminationStatus, generation: processGeneration) }
         }
         errorPipe.fileHandleForReading.readabilityHandler = { handle in
-            _ = handle.availableData
+            let data = handle.availableData
+            guard !data.isEmpty, let logger else { return }
+            let message = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !message.isEmpty else { return }
+            Task { await logger.log(level: .error, component: "codex", message: message) }
         }
 
         do {
@@ -60,7 +86,10 @@ public actor LineProcessTransport: LineTransport {
         stdout = output.fileHandleForReading
         stderr = errorPipe.fileHandleForReading
         streamPair = pair
-        readOutputUntilEOF(from: output.fileHandleForReading)
+        if let logger {
+            Task { await logger.log(level: .info, component: "codex", message: "started \(executableURL.path) \(arguments.joined(separator: " "))") }
+        }
+        readOutputUntilEOF(from: output.fileHandleForReading, generation: processGeneration)
     }
 
     public func send(_ line: Data) async throws {
@@ -78,9 +107,16 @@ public actor LineProcessTransport: LineTransport {
     }
 
     public func stop() async {
+        outputTask?.cancel()
+        outputTask = nil
         stdout?.readabilityHandler = nil
         stderr?.readabilityHandler = nil
-        if let process, process.isRunning { process.terminate() }
+        if let process, process.isRunning {
+            process.terminate()
+            if let logger {
+                Task { await logger.log(level: .info, component: "codex", message: "terminated process") }
+            }
+        }
         stdin?.closeFile()
         stdout?.closeFile()
         stderr?.closeFile()
@@ -96,7 +132,8 @@ public actor LineProcessTransport: LineTransport {
         didFinish = true
     }
 
-    private func appendOutput(_ data: Data) {
+    private func appendOutput(_ data: Data, generation: Int) {
+        guard generation == self.generation else { return }
         guard !data.isEmpty else { return }
         buffer.append(data)
         while let newline = buffer.firstIndex(of: 0x0A) {
@@ -106,23 +143,25 @@ public actor LineProcessTransport: LineTransport {
         }
     }
 
-    private func readOutputUntilEOF(from handle: FileHandle) {
-        Task.detached { [weak self] in
+    private func readOutputUntilEOF(from handle: FileHandle, generation: Int) {
+        outputTask = Task.detached { [weak self] in
             while true {
                 let data = handle.availableData
                 guard !data.isEmpty else { break }
-                await self?.appendOutput(data)
+                await self?.appendOutput(data, generation: generation)
             }
-            await self?.recordOutputEOF()
+            await self?.recordOutputEOF(generation: generation)
         }
     }
 
-    private func recordTermination(_ status: Int32) {
+    private func recordTermination(_ status: Int32, generation: Int) {
+        guard generation == self.generation else { return }
         terminationStatus = status
         finishIfReady()
     }
 
-    private func recordOutputEOF() {
+    private func recordOutputEOF(generation: Int) {
+        guard generation == self.generation else { return }
         outputReachedEOF = true
         finishIfReady()
     }

@@ -5,6 +5,8 @@ public actor AppServerRateLimitProvider: RateLimitProvider {
 
     private let transport: any LineTransport
     private let now: @Sendable () -> Date
+    private let logger: DiagnosticsLogger?
+    private let startupTimeout: Duration
     private let requestTimeout: Duration
     private var started = false
     private var nextRequestID = 1
@@ -19,46 +21,85 @@ public actor AppServerRateLimitProvider: RateLimitProvider {
     public init(
         transport: any LineTransport,
         now: @escaping @Sendable () -> Date = Date.init,
-        requestTimeout: Duration = .seconds(10)
+        startupTimeout: Duration = .seconds(30),
+        requestTimeout: Duration = .seconds(30),
+        logger: DiagnosticsLogger? = nil
     ) {
         self.transport = transport
         self.now = now
+        self.logger = logger
+        self.startupTimeout = startupTimeout
         self.requestTimeout = requestTimeout
     }
 
-    public init(locator: CodexExecutableLocator = .init()) throws {
+    public init(
+        locator: CodexExecutableLocator = .init(),
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        logger: DiagnosticsLogger? = nil
+    ) throws {
         guard let executableURL = locator.resolve() else {
             throw RateLimitProviderError.codexNotFound
         }
         let command = CodexAppServerCommand(codexURL: executableURL)
-        transport = LineProcessTransport(executableURL: command.executableURL, arguments: command.arguments)
+        transport = LineProcessTransport(executableURL: command.executableURL, arguments: command.arguments, environment: environment, logger: logger)
         now = Date.init
-        requestTimeout = .seconds(10)
+        self.logger = logger
+        startupTimeout = .seconds(30)
+        requestTimeout = .seconds(30)
     }
 
     public func fetch() async throws -> RawQuotaSnapshot {
         requestDidTimeout = false
-        let timeoutTask = Task.detached { [weak self, requestTimeout] in
-            try? await Task.sleep(for: requestTimeout)
-            guard !Task.isCancelled else { return }
-            await self?.timeoutCurrentRequest()
-        }
-        defer { timeoutTask.cancel() }
         do {
-            return try await fetchUnbounded()
+            try await withTimeout(startupTimeout) { [weak self] in
+                guard let self else { throw CancellationError() }
+                try await self.startIfNeeded()
+            }
+            return try await withTimeout(requestTimeout) { [weak self] in
+                guard let self else { throw CancellationError() }
+                return try await self.readQuotaWithRetry()
+            }
         } catch {
             if requestDidTimeout { throw RateLimitProviderError.timedOut }
             throw error
         }
     }
 
-    private func fetchUnbounded() async throws -> RawQuotaSnapshot {
-        try await startIfNeeded()
+    private func readQuota() async throws -> RawQuotaSnapshot {
         let message = try await request(method: "account/rateLimits/read", params: nil)
         try throwForMessageError(message)
         guard let snapshot = message.snapshot else { throw RateLimitProviderError.noQuotaData }
         latestWireSnapshot = snapshot
         return snapshot.toRaw(capturedAt: now())
+    }
+
+    private func readQuotaWithRetry() async throws -> RawQuotaSnapshot {
+        for attempt in 0..<3 {
+            do {
+                return try await readQuota()
+            } catch let error as RateLimitProviderError where error == .networkUnavailable && attempt < 2 {
+                guard terminalError == nil else { throw error }
+                let delay: Duration = attempt == 0 ? .seconds(1) : .seconds(3)
+                await logger?.log(level: .warning, component: "refresh", message: "quota request network retry attempt=\(attempt + 1) delay=\(delay.components.seconds)s")
+                try await Task.sleep(for: delay)
+            } catch {
+                throw error
+            }
+        }
+        throw RateLimitProviderError.networkUnavailable
+    }
+
+    private func withTimeout<T: Sendable>(
+        _ timeout: Duration,
+        operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        let timeoutTask = Task.detached { [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled else { return }
+            await self?.timeoutCurrentRequest()
+        }
+        defer { timeoutTask.cancel() }
+        return try await operation()
     }
 
     private func timeoutCurrentRequest() async {
@@ -172,6 +213,9 @@ public actor AppServerRateLimitProvider: RateLimitProvider {
         let normalized = errorMessage.lowercased()
         if normalized.contains("login") || normalized.contains("authentication") || normalized.contains("401") {
             throw RateLimitProviderError.notAuthenticated
+        }
+        if normalized.contains("failed to fetch codex rate limits") || normalized.contains("error sending request") {
+            throw RateLimitProviderError.networkUnavailable
         }
         throw RateLimitProviderError.protocolViolation(errorMessage)
     }

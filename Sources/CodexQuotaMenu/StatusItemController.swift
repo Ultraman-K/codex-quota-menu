@@ -7,21 +7,27 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let onRefresh: () -> Void
     private let onToggleLaunchAtLogin: () -> Void
     private let onToggleCompactMode: () -> Void
+    private let onConfigureProxy: () -> Void
     private var currentDisplay = QuotaPresentation.make(snapshot: nil)
     private var launchAtLoginEnabled = false
     private var displayMode: StatusBarDisplayMode
     private var isRefreshing = false
     private var errorMessage: String?
+    private var proxyMenuText: String
 
     init(
         onRefresh: @escaping () -> Void,
         onToggleLaunchAtLogin: @escaping () -> Void,
         onToggleCompactMode: @escaping () -> Void,
+        onConfigureProxy: @escaping () -> Void,
+        proxyMenuText: String,
         displayMode: StatusBarDisplayMode
     ) {
         self.onRefresh = onRefresh
         self.onToggleLaunchAtLogin = onToggleLaunchAtLogin
         self.onToggleCompactMode = onToggleCompactMode
+        self.onConfigureProxy = onConfigureProxy
+        self.proxyMenuText = proxyMenuText
         self.displayMode = displayMode
         super.init()
         item.menu = makeMenu()
@@ -59,6 +65,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         item.menu = makeMenu()
     }
 
+    func setProxyMenuText(_ text: String) {
+        proxyMenuText = text
+        item.menu = makeMenu()
+    }
+
     private func render(display: QuotaDisplay) {
         guard let button = item.button else { return }
         button.attributedTitle = statusTitle(display: display)
@@ -68,6 +79,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private func statusTitle(display: QuotaDisplay) -> NSAttributedString {
         let title = NSMutableAttributedString()
+        if display.usesMutedQuotaColors, displayMode == .full {
+            title.append(NSAttributedString(string: "◷ ", attributes: [.foregroundColor: NSColor.secondaryLabelColor]))
+        }
         let parts = QuotaPresentation.statusText(display, mode: displayMode).components(separatedBy: " | ")
         title.append(metricText(parts[safe: 0] ?? "5h --", card: display.cards.first(where: { $0.title == "5 小时使用限制" }), muted: display.usesMutedQuotaColors))
         title.append(NSAttributedString(string: " | ", attributes: [.foregroundColor: NSColor.secondaryLabelColor]))
@@ -129,6 +143,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         launchAtLogin.target = self
         launchAtLogin.state = launchAtLoginEnabled ? .on : .off
         menu.addItem(launchAtLogin)
+        let proxy = NSMenuItem(title: "网络代理", action: #selector(configureProxy), keyEquivalent: "")
+        proxy.target = self
+        menu.addItem(proxy)
+        let proxyInfo = NSMenuItem(title: proxyMenuText, action: nil, keyEquivalent: "")
+        proxyInfo.isEnabled = false
+        proxyInfo.attributedTitle = NSAttributedString(
+            string: proxyMenuText,
+            attributes: [.foregroundColor: NSColor.secondaryLabelColor]
+        )
+        menu.addItem(proxyInfo)
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "")
         quit.target = self
@@ -162,6 +186,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func toggleCompactMode() {
         onToggleCompactMode()
+    }
+
+    @objc private func configureProxy() {
+        onConfigureProxy()
     }
 }
 

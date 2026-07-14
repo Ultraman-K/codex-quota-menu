@@ -14,4 +14,5 @@ public enum RateLimitProviderError: Error, Equatable {
     case noQuotaData
     case processExited(Int32)
     case timedOut
+    case networkUnavailable
 }

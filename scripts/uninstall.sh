@@ -9,6 +9,7 @@ fi
 BIN="$HOME/Library/Application Support/CodexQuotaMenu/bin/codex-quota-menu"
 PLIST="$HOME/Library/LaunchAgents/com.codex.quota-menu.plist"
 LABEL="com.codex.quota-menu"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 /bin/launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 rm -f "$PLIST"
@@ -25,7 +26,7 @@ rmdir "$HOME/Library/Application Support/CodexQuotaMenu/bin" 2>/dev/null || true
 
 if [[ "${1:-}" == "--purge" ]]; then
   rm -rf "$HOME/Library/Application Support/CodexQuotaMenu"
-  rm -rf "$HOME/Library/Logs/CodexQuotaMenu"
+  rm -rf "$ROOT/logs"
 fi
 
 print "Codex Quota Menu removed."

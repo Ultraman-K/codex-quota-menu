@@ -8,7 +8,7 @@ final class QuotaCardMenuItemView: NSView {
     init(cards: [QuotaCardDisplay], leadingInset: CGFloat) {
         rows = cards.map { QuotaCardRowView(card: $0, leadingInset: leadingInset) }
         let height = CGFloat(max(rows.count, 1)) * 92
-        super.init(frame: NSRect(x: 0, y: 0, width: 208, height: height))
+        super.init(frame: NSRect(x: 0, y: 0, width: 184, height: height))
         for row in rows {
             addSubview(row)
         }
@@ -49,14 +49,15 @@ private final class QuotaCardRowView: NSView {
         resetLabel.textColor = .secondaryLabelColor
         valueLabel.stringValue = "剩余 \(card.remainingPercent)%"
         valueLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        valueLabel.textColor = QuotaVisualColor.foreground(for: card.alert)
+        let valueColor = card.usesMutedColors ? NSColor.secondaryLabelColor : QuotaVisualColor.foreground(for: card.alert)
+        valueLabel.textColor = valueColor
 
         trackView.wantsLayer = true
         trackView.layer?.cornerRadius = 6
         trackView.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.5).cgColor
         fillView.wantsLayer = true
         fillView.layer?.cornerRadius = 6
-        fillView.layer?.backgroundColor = QuotaVisualColor.foreground(for: card.alert).cgColor
+        fillView.layer?.backgroundColor = valueColor.cgColor
 
         addSubview(titleLabel)
         addSubview(resetLabel)

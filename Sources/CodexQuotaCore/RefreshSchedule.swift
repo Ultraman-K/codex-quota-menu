@@ -5,10 +5,10 @@ public enum RefreshSchedule {
         if reason == .codexNotFound || reason == .notAuthenticated { return .seconds(300) }
         return switch consecutiveFailures {
         case 0: .seconds(30)
-        case 1: .seconds(5)
-        case 2: .seconds(10)
-        case 3: .seconds(30)
-        default: .seconds(60)
+        case 1: .seconds(3)
+        case 2: .seconds(5)
+        case 3: .seconds(15)
+        default: .seconds(30)
         }
     }
 }

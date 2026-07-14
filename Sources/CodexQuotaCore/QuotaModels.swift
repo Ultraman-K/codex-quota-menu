@@ -5,7 +5,7 @@ public enum QuotaSource: String, Codable, Sendable { case appServer, sessionLog,
 public enum QuotaFreshness: String, Codable, Sendable { case fresh, stale, unavailable }
 public enum QuotaAlert: String, Codable, Sendable { case normal, warning, danger, unknown }
 public enum QuotaDisplayState: Equatable, Sendable { case live, refreshing, lastKnown, expired, unavailable }
-public enum QuotaFailureReason: Equatable, Sendable { case timeout, codexNotFound, notAuthenticated, processExited, protocolError, cacheUnreadable, unknown }
+public enum QuotaFailureReason: Equatable, Sendable { case timeout, codexNotFound, notAuthenticated, processExited, protocolError, networkUnavailable, cacheUnreadable, unknown }
 
 public struct QuotaRefreshResult: Equatable, Sendable {
     public let snapshot: QuotaSnapshot?

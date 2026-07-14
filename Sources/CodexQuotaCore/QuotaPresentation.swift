@@ -22,6 +22,7 @@ public struct QuotaCardDisplay: Equatable, Sendable {
     public let resetText: String
     public let remainingPercent: Int
     public let alert: QuotaAlert
+    public let usesMutedColors: Bool
 }
 
 public struct QuotaDisplay: Equatable, Sendable {
@@ -39,7 +40,7 @@ public struct QuotaDisplay: Equatable, Sendable {
 public enum QuotaPresentation {
     public static func statusText(_ display: QuotaDisplay, mode: StatusBarDisplayMode) -> String {
         guard mode != .compact else { return "5h | 7d" }
-        return display.usesMutedQuotaColors ? "◷ \(display.menuText)" : display.menuText
+        return display.menuText
     }
 
     public static func make(
@@ -71,9 +72,10 @@ public enum QuotaPresentation {
             lines.append("数据可能已过期 · 上次更新 \(format(snapshot.updatedAt, now: now, timeZone: timeZone))")
         }
         if let status = detailStatus(result, snapshot: snapshot, now: now, timeZone: timeZone) { lines.append(status) }
+        let usesMutedQuotaColors = result.state == .lastKnown || result.state == .expired || result.state == .unavailable
         let cards = [
-            card(window: snapshot.fiveHour, title: "5 小时使用限制", now: now, timeZone: timeZone),
-            card(window: snapshot.weekly, title: "每周使用限额", now: now, timeZone: timeZone)
+            card(window: snapshot.fiveHour, title: "5 小时使用限制", now: now, timeZone: timeZone, usesMutedColors: usesMutedQuotaColors),
+            card(window: snapshot.weekly, title: "每周使用限额", now: now, timeZone: timeZone, usesMutedColors: usesMutedQuotaColors)
         ].compactMap { $0 }
         return .init(
             menuText: "\(fiveHour) | \(weekly)",
@@ -84,7 +86,7 @@ public enum QuotaPresentation {
             state: result.state,
             detailStatusText: detailStatus(result, snapshot: snapshot, now: now, timeZone: timeZone),
             retryText: retryText(result.nextRetryAt, now: now),
-            usesMutedQuotaColors: result.state == .lastKnown || result.state == .expired || result.state == .unavailable
+            usesMutedQuotaColors: usesMutedQuotaColors
         )
     }
 
@@ -113,6 +115,7 @@ public enum QuotaPresentation {
         case .codexNotFound: "未找到 Codex CLI · 请安装并登录 Codex CLI 后重试。"
         case .notAuthenticated: "Codex 未登录 · 请在终端运行：codex login"
         case .timeout: "无法读取 Codex 额度 · 连接超时（10 秒）"
+        case .networkUnavailable: "无法连接 ChatGPT 服务 · 请检查网络或配置 Clash 代理。"
         case .cacheUnreadable: "暂无可用额度数据 · 本地缓存无法读取，正在重新获取。"
         default: "暂未取得额度数据 · 正在连接 Codex…"
         }
@@ -135,10 +138,10 @@ public enum QuotaPresentation {
         return "\(label)：剩余 \(window.remainingPercent)%，\(resetText)"
     }
 
-    private static func card(window: QuotaWindow?, title: String, now: Date, timeZone: TimeZone) -> QuotaCardDisplay? {
+    private static func card(window: QuotaWindow?, title: String, now: Date, timeZone: TimeZone, usesMutedColors: Bool) -> QuotaCardDisplay? {
         guard let window else { return nil }
         let resetText = window.resetsAt.map { "\(formatCardReset($0, now: now, timeZone: timeZone)) 重置" } ?? "重置时间未知"
-        return .init(title: title, resetText: resetText, remainingPercent: window.remainingPercent, alert: window.alert)
+        return .init(title: title, resetText: resetText, remainingPercent: window.remainingPercent, alert: window.alert, usesMutedColors: usesMutedColors)
     }
 
     private static func format(_ date: Date, now: Date, timeZone: TimeZone) -> String {

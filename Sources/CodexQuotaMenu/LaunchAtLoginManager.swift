@@ -19,7 +19,13 @@ actor LaunchAtLoginManager {
     func setEnabled(_ enabled: Bool) throws -> Bool {
         if enabled {
             try FileManager.default.createDirectory(at: plistURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let data = try LaunchAgentConfiguration.plistData(executableURL: executableURL, codexURL: codexURL)
+            let workingDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            try FileManager.default.createDirectory(at: workingDirectory.appending(path: "logs"), withIntermediateDirectories: true)
+            let data = try LaunchAgentConfiguration.plistData(
+                executableURL: executableURL,
+                codexURL: codexURL,
+                workingDirectory: workingDirectory
+            )
             try data.write(to: plistURL, options: .atomic)
             try runLaunchctl(["bootstrap", "gui/\(getuid())", plistURL.path], allowAlreadyLoaded: true)
         } else {
